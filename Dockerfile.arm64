@@ -1,0 +1,31 @@
+# Dockerfile for cross-compiling MDB-C to Linux ARM64 (aarch64)
+# Usage: docker build -f Dockerfile.arm64 -t mdb-c-arm64-builder .
+
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install cross-compilation toolchain and build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    binutils-aarch64-linux-gnu \
+    file \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /workspace
+
+# Set environment variables for cross-compilation
+ENV CC=aarch64-linux-gnu-gcc
+ENV CXX=aarch64-linux-gnu-g++
+ENV AR=aarch64-linux-gnu-ar
+ENV RANLIB=aarch64-linux-gnu-ranlib
+ENV STRIP=aarch64-linux-gnu-strip
+
+# Default command shows toolchain info
+CMD ["aarch64-linux-gnu-gcc", "--version"]

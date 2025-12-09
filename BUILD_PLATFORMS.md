@@ -93,7 +93,46 @@ Edit `cmake/toolchains/linux-arm.cmake` if your toolchain is in a different loca
 
 ### 3. Linux ARM64/AArch64
 
-**For 64-bit ARM devices:**
+**Option A: Cross-compilation with Docker (Recommended for macOS):**
+
+The easiest way to cross-compile for ARM64 from macOS is using Docker:
+
+```bash
+# Quick start - single command build
+make arm64
+
+# Or using the script directly
+./docker-build-arm64.sh build
+
+# Clean and rebuild
+make arm64-rebuild
+
+# Open interactive shell in build container
+make arm64-shell
+
+# Build Docker image only (first time or after Dockerfile changes)
+make docker-image
+```
+
+**Output:**
+- Binaries: `build/docker-arm64/`
+- Distribution: `dist/linux-arm64/`
+- Includes all libraries and example applications
+
+**Requirements:**
+- Docker Desktop for Mac (or Docker Engine on Linux)
+- No ARM toolchain installation needed on host!
+
+**Verification:**
+The build script automatically verifies ARM64 architecture:
+```bash
+$ ./docker-build-arm64.sh build
+...
+✓ Checking: dist/linux-arm64/mdb_test
+   ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV)
+```
+
+**Option B: Native cross-compilation (Linux host):**
 
 ```bash
 # Install ARM64 cross-compiler (Ubuntu/Debian)
@@ -254,6 +293,162 @@ FetchContent_MakeAvailable(mdb-c)
 target_link_libraries(your_app mdb_protocol mdb_hal)
 ```
 
+## Docker-Based Cross-Compilation
+
+### Overview
+
+Docker provides an isolated, reproducible build environment without requiring toolchain installation on your host system. This is especially useful for:
+
+- **macOS users** needing to build for Linux ARM64
+- **CI/CD pipelines** requiring consistent build environments
+- **Teams** wanting reproducible builds across different developer machines
+
+### Docker Files
+
+The project includes:
+
+- `Dockerfile.arm64` - Build image for ARM64 cross-compilation
+- `docker-build-arm64.sh` - Automated build script
+- `Makefile` - Convenient shortcuts for common tasks
+- `.dockerignore` - Optimizes Docker build context
+
+### Quick Reference
+
+```bash
+# Build for ARM64
+make arm64
+# or
+./docker-build-arm64.sh build
+
+# Clean build artifacts
+make arm64-clean
+
+# Clean and rebuild
+make arm64-rebuild
+
+# Interactive shell (for debugging)
+make arm64-shell
+
+# Rebuild Docker image
+make docker-image
+```
+
+### What Happens During Build
+
+1. **Image Check**: Verifies Docker image exists, builds if needed
+2. **Configuration**: Runs CMake with ARM64 toolchain
+3. **Compilation**: Builds all libraries and examples
+4. **Distribution**: Creates `dist/linux-arm64/` with binaries
+5. **Verification**: Checks binaries are ARM64 ELF format
+
+### Directory Structure
+
+```
+MDB-C/
+├── Dockerfile.arm64           # Docker build definition
+├── docker-build-arm64.sh      # Build automation script
+├── .dockerignore              # Build context optimization
+├── Makefile                   # Convenient shortcuts
+├── build/
+│   └── docker-arm64/          # Docker build output
+└── dist/
+    └── linux-arm64/           # Distribution binaries
+        ├── mdb_test
+        ├── mdb_threaded
+        ├── mdb43_basket_demo
+        ├── mdb_sniffer_app
+        ├── libmdb_protocol.a
+        ├── libmdb_hal.a
+        └── libmdb_hal_callback.a
+```
+
+### Advanced Usage
+
+**Custom build options:**
+
+```bash
+# Build with verbose logging
+docker run --rm \
+  -v "$(pwd):/workspace" \
+  -w /workspace \
+  mdb-c-arm64-builder \
+  bash -c "cmake -B build/custom \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-arm64.cmake \
+    -DMDB_VERBOSE_LOGGING=ON && \
+    cmake --build build/custom"
+```
+
+**Debug build:**
+
+```bash
+# Modify CMAKE_BUILD_TYPE in docker-build-arm64.sh
+# Change: -DCMAKE_BUILD_TYPE=Release
+# To:     -DCMAKE_BUILD_TYPE=Debug
+```
+
+**Interactive development:**
+
+```bash
+# Open shell in container
+make arm64-shell
+
+# Inside container:
+root@container:/workspace# cmake -B build/test \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-arm64.cmake
+root@container:/workspace# cmake --build build/test
+root@container:/workspace# file build/test/examples/mdb_test
+```
+
+### Deploying to ARM64 Device
+
+After building, transfer binaries to your ARM64 device:
+
+```bash
+# Copy distribution to device
+scp -r dist/linux-arm64/* user@arm-device:/opt/mdb-c/
+
+# On device: test the binary
+ssh user@arm-device
+cd /opt/mdb-c
+./mdb_test --version
+```
+
+### Troubleshooting Docker Builds
+
+**Docker daemon not running:**
+```bash
+$ ./docker-build-arm64.sh build
+✗ Failed to connect to Docker daemon
+
+Solution: Start Docker Desktop
+```
+
+**Permission denied:**
+```bash
+$ make arm64
+bash: ./docker-build-arm64.sh: Permission denied
+
+Solution: chmod +x docker-build-arm64.sh
+```
+
+**Out of disk space:**
+```bash
+# Clean Docker build cache
+docker system prune -a
+
+# Remove old build containers
+docker container prune
+```
+
+**Architecture verification fails:**
+```bash
+# If binaries show x86_64 instead of aarch64:
+# 1. Rebuild Docker image
+make docker-image
+# 2. Rebuild project
+make arm64-rebuild
+```
+
 ## Cross-Compilation Tips
 
 ### Setting up ARM toolchain (Ubuntu/Debian)
@@ -342,7 +537,70 @@ cmake --preset=linux-x64-release -DBUILD_EXAMPLES=OFF
 
 ## CI/CD Integration
 
-### GitHub Actions example:
+### GitHub Actions with Docker (Recommended):
+
+```yaml
+name: Multi-Platform Build
+
+on: [push, pull_request]
+
+jobs:
+  build-arm64:
+    name: Build Linux ARM64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build ARM64 with Docker
+        run: |
+          chmod +x docker-build-arm64.sh
+          ./docker-build-arm64.sh build
+
+      - name: Upload ARM64 artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: mdb-c-linux-arm64
+          path: dist/linux-arm64/*
+
+  build-native:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform: [linux-x64-release, macos-release]
+        include:
+          - platform: linux-x64-release
+            os: ubuntu-latest
+          - platform: macos-release
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - name: Build
+        run: ./build.sh ${{ matrix.platform }} build
+
+      - name: Package
+        run: ./build.sh ${{ matrix.platform }} package
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: mdb-c-${{ matrix.platform }}
+          path: dist/*.tar.gz
+```
+
+### GitHub Actions without Docker (traditional):
 
 ```yaml
 name: Multi-Platform Build

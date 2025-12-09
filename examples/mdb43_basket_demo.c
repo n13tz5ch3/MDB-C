@@ -13,15 +13,20 @@
  * - Remote vend requests
  */
 
-/* Define POSIX features for clock_gettime, nanosleep, usleep, etc. */
+/* Define POSIX and BSD features for clock_gettime, nanosleep, usleep, etc. */
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200112L
+#endif
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
 #endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
+#include <time.h>
+#include <string.h>
 #include "MDB_Linux.h"
 #include "VMC.h"
 #include "Cashless.h"
@@ -77,17 +82,20 @@ void demo_basket_shopping(void) {
     printf("----------------------------------------\n");
 
     /* Simulate card with $10.00 */
-    cashless.userFunds = 1000;  /* $10.00 in cents */
+    cashless.fundsAvailable = 1000;  /* $10.00 in cents */
     cashless.sessionActive_f = 1;
-    cashless.state = CASHLESS_STATE_IDLE;
+    cashless.basketEnabled_s = 1;
 
-    printf("Session started with $%.2f credit\n\n", cashless.userFunds / 100.0);
+    printf("Session started with $%.2f credit\n\n", cashless.fundsAvailable / 100.0);
 
     printf("Step 2: VMC Initiates Basket Mode (MDB 4.3)\n");
     printf("----------------------------------------\n");
 
+    /* Initialize basket */
+    cashless.basketItemCount = 0;
+    cashless.basketTotalValue = 0;
+    cashless.basketItemsDispensed = 0;
     vmc_beginBasket();
-    cashless_beginBasket(&cashless);
 
     printf("Basket mode activated\n\n");
 
@@ -114,10 +122,7 @@ void demo_basket_shopping(void) {
         /* Add to basket */
         vmc_addToBasket(items[i].itemNumber, items[i].price);
 
-        /* Simulate cashless approval */
-        cashless.vendItemNumber = items[i].itemNumber;
-        cashless.vendAmount = items[i].price;
-
+        /* Add to cashless basket */
         if (cashless.basketItemCount < 16) {
             cashless.basketItems[cashless.basketItemCount] = items[i].itemNumber;
             cashless.basketPrices[cashless.basketItemCount] = items[i].price;
@@ -141,6 +146,7 @@ void demo_basket_shopping(void) {
     for (uint8_t i = 0; i < cashless.basketItemCount; i++) {
         if (dispense_product(cashless.basketItems[i])) {
             successCount++;
+            cashless.basketItemsDispensed++;
         } else {
             failCount++;
         }
@@ -148,23 +154,23 @@ void demo_basket_shopping(void) {
 
     printf("\nDispensing complete: %u success, %u failed\n\n", successCount, failCount);
 
+    uint16_t refundAmount = 0;
     if (failCount > 0) {
         printf("Step 5: MDB 4.3 Partial Refund\n");
         printf("----------------------------------------\n");
 
-        uint16_t refundAmount = cashless_calculatePartialRefund(&cashless, failCount);
+        /* Calculate refund for failed items */
+        refundAmount = cashless_calculatePartialRefund(&cashless);
 
         printf("Partial refund for %u failed items: $%.2f\n",
                failCount,
                refundAmount / 100.0);
 
         /* Issue refund */
-        cashless.partialRefundAmount = refundAmount;
-        cashless.partialRefundPending_f = 1;
-        cashless.userFunds += refundAmount;
+        cashless.fundsAvailable += refundAmount;
 
         printf("Refund issued - updated balance: $%.2f\n\n",
-               cashless.userFunds / 100.0);
+               cashless.fundsAvailable / 100.0);
 
         /* VMC notifies cashless device */
         vmc_partialRefund(failCount);
@@ -173,15 +179,14 @@ void demo_basket_shopping(void) {
     printf("Step 6: Complete Basket Transaction\n");
     printf("----------------------------------------\n");
 
-    /* Complete basket */
-    cashless_completeBasket(&cashless);
+    /* Complete basket - deduct final amount */
+    uint16_t finalCharge = cashless.basketTotalValue - refundAmount;
+    cashless.fundsAvailable -= finalCharge;
     vmc_completeBasket();
 
     printf("Basket completed\n");
-    printf("Final charge: $%.2f\n",
-           (cashless.basketTotalValue - (failCount > 0 ? cashless.partialRefundAmount : 0)) / 100.0);
-    printf("Remaining credit: $%.2f\n\n",
-           cashless.userFunds / 100.0);
+    printf("Final charge: $%.2f\n", finalCharge / 100.0);
+    printf("Remaining credit: $%.2f\n\n", cashless.fundsAvailable / 100.0);
 }
 
 /**
@@ -201,11 +206,11 @@ void demo_remote_vend(void) {
     printf("Step 1: Mobile App Payment\n");
     printf("----------------------------------------\n");
 
-    cashless.userFunds = 250;  /* $2.50 pre-paid */
+    cashless.fundsAvailable = 250;  /* $2.50 pre-paid */
     cashless.sessionActive_f = 1;
-    cashless.state = CASHLESS_STATE_IDLE;
+    cashless.remoteVendEnabled_s = 1;
 
-    printf("Mobile payment: $%.2f\n", cashless.userFunds / 100.0);
+    printf("Mobile payment: $%.2f\n", cashless.fundsAvailable / 100.0);
     printf("Item ordered: Pepsi (#102)\n\n");
 
     printf("Step 2: Cashless Device Initiates Remote Vend (MDB 4.3)\n");
@@ -224,12 +229,12 @@ void demo_remote_vend(void) {
 
     if (dispense_product(cashless.remoteVendItemNumber)) {
         printf("Remote vend successful\n");
-        cashless.userFunds -= cashless.remoteVendPrice;
+        cashless.fundsAvailable -= cashless.remoteVendPrice;
     } else {
         printf("Remote vend failed - no charge\n");
     }
 
-    printf("Remaining credit: $%.2f\n\n", cashless.userFunds / 100.0);
+    printf("Remaining credit: $%.2f\n\n", cashless.fundsAvailable / 100.0);
 
     cashless.remoteVendActive_f = 0;
 }
@@ -263,10 +268,11 @@ void demo_coupon_support(void) {
 
     printf("Coupon applied: +$%.2f credit\n", cashless.couponValue / 100.0);
 
-    cashless.userFunds += cashless.couponValue;
+    cashless.fundsAvailable = cashless.couponValue;
     cashless.sessionActive_f = 1;
+    cashless.couponEnabled_s = 1;
 
-    printf("Total credit: $%.2f\n\n", cashless.userFunds / 100.0);
+    printf("Total credit: $%.2f\n\n", cashless.fundsAvailable / 100.0);
 
     printf("Step 3: User Makes Purchase\n");
     printf("----------------------------------------\n");
@@ -275,9 +281,10 @@ void demo_coupon_support(void) {
     printf("Item price: $%.2f\n", itemPrice / 100.0);
 
     if (dispense_product(301)) {
-        cashless.userFunds -= itemPrice;
         printf("Final cost with coupon: $%.2f\n", (itemPrice - cashless.couponValue) / 100.0);
-        printf("Remaining credit: $%.2f\n\n", cashless.userFunds / 100.0);
+        cashless.fundsAvailable = (itemPrice > cashless.couponValue) ?
+                                   0 : (cashless.couponValue - itemPrice);
+        printf("Remaining credit: $%.2f\n\n", cashless.fundsAvailable / 100.0);
     }
 }
 
