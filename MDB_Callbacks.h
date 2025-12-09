@@ -140,7 +140,7 @@ typedef struct {
     uint16_t buffer[256];   /* 9-bit data buffer (8 data + 1 mode) */
     uint8_t head;           /* Write position */
     uint8_t tail;           /* Read position */
-    volatile uint8_t count; /* Number of items in queue */
+    volatile uint16_t count; /* Number of items in queue (0-256) */
     void *mutex;            /* Mutex for thread safety (user-managed) */
 } mdb_byte_queue_t;
 

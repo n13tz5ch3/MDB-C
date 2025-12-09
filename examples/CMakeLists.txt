@@ -16,6 +16,10 @@ message(STATUS "  - mdb_threaded (callback-based with pthread)")
 
 # MDB 4.3 Basket Shopping Demo
 add_executable(mdb43_basket_demo mdb43_basket_demo.c)
+target_include_directories(mdb43_basket_demo PRIVATE
+    "${CMAKE_SOURCE_DIR}/Devices/Vending Machine Controller"
+    "${CMAKE_SOURCE_DIR}/Devices/Cashless Payment Device"
+)
 target_link_libraries(mdb43_basket_demo PRIVATE mdb_core)
 message(STATUS "  - mdb43_basket_demo (MDB 4.3 features demonstration)")
 

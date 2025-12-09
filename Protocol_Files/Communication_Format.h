@@ -21,6 +21,6 @@ extern union nineBit {                 /*Union allows writing mode and data bits
                 uint8_t mode : 1;      /*1 mode bit*/
         } part;
         uint16_t whole;
-} block[35];                           /*Array of 9 bit data, MDB has a maximum block size of 36 "bytes"*/
+} block[36];                           /*Array of 9 bit data, MDB has a maximum block size of 36 "bytes"*/
 
 #endif
